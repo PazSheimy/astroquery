@@ -5,8 +5,10 @@ import os
 
 import astropy.coordinates as coord
 import pytest
+from astropy.utils.exceptions import AstropyDeprecationWarning
 
 from astroquery.exceptions import RemoteServiceError
+from astroquery.exceptions import TimeoutError as AstroqueryTimeoutError
 from astroquery.utils.mocks import MockResponse
 from ... import fermi
 
@@ -197,3 +199,70 @@ def test_bad_input_surfaces_server_error_message(request):
                        match='Invalid query parameters'):
         fermi.core.FermiLAT.query_object_async(
             FK5_COORDINATES, energyrange_MeV='999999,1')
+
+
+def test_wait_for_completion_polls_until_done(request, capsys):
+    """The poll loop sleeps between checks and reports the elapsed time."""
+    mp = request.getfixturevalue("monkeypatch")
+    responses = [MockResponse(read_data('status_running')),
+                 MockResponse(read_data('status_complete'))]
+    mp.setattr(fermi.FermiLAT, '_request', lambda *a, **kw: responses.pop(0))
+    mp.setattr(fermi.FermiLAT, 'check_frequency', 0)
+
+    status = fermi.core.FermiLAT.wait_for_completion(QUERY_ID, verbose=True)
+    assert status['state'] == 'Query completed'
+    assert 'Query completed in' in capsys.readouterr().out
+
+
+def test_wait_for_completion_times_out(request):
+    mp = request.getfixturevalue("monkeypatch")
+    mp.setattr(fermi.FermiLAT, '_request',
+               lambda *a, **kw: MockResponse(read_data('status_running')))
+
+    with pytest.raises(AstroqueryTimeoutError, match='did not complete within'):
+        fermi.core.FermiLAT.wait_for_completion(QUERY_ID, max_wait=0)
+
+
+def test_non_json_error_body_falls_back_to_text(request):
+    """A non-JSON error body is reported verbatim rather than crashing."""
+    mp = request.getfixturevalue("monkeypatch")
+    mp.setattr(fermi.FermiLAT, '_request',
+               lambda *a, **kw: MockResponse(b'Service unavailable',
+                                             status_code=503))
+
+    with pytest.raises(RemoteServiceError, match='Service unavailable'):
+        fermi.core.FermiLAT.get_status(QUERY_ID)
+
+
+def test_file_url_from_plain_string():
+    url = fermi.core._file_url('x_PH00.fits')
+    assert url.endswith('/x_PH00.fits')
+    assert url.startswith('http')
+
+
+def test_file_url_from_relative_path():
+    url = fermi.core._file_url({'path': 'y_SC00.fits'})
+    assert url.endswith('/y_SC00.fits')
+    assert url.startswith('http')
+
+
+def test_file_url_without_name_raises():
+    with pytest.raises(RemoteServiceError, match='Could not determine'):
+        fermi.core._file_url({})
+
+
+def test_bad_coordinates_raise_value_error():
+    with pytest.raises(ValueError, match='Coordinates not specified correctly'):
+        fermi.core._parse_coordinates(3.14159)
+
+
+def test_deprecated_function_still_works(patch_request):
+    with pytest.warns(AstropyDeprecationWarning):
+        result = fermi.core.get_fermilat_datafile(QUERY_ID)
+    assert result == EXPECTED_URLS
+
+
+def test_deprecated_class_still_works(patch_request):
+    with pytest.warns(AstropyDeprecationWarning):
+        getter = fermi.core.GetFermilatDatafile()
+    assert getter(QUERY_ID) == EXPECTED_URLS
