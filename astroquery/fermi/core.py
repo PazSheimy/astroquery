@@ -107,8 +107,8 @@ class FermiLATClass(BaseQuery):
         check_frequency : float, optional
             Minutes between status polls.  Defaults to `check_frequency`.
         max_wait : float, optional
-            Give up (raising `~astroquery.exceptions.TimeoutError`) after
-            this many minutes.  ``None`` (default) waits indefinitely.
+            Give up (raising ``TimeoutError``) after this many minutes.
+            ``None`` (default) waits indefinitely.
         verbose : bool
             Print the elapsed time on completion.
         get_query_payload : bool
